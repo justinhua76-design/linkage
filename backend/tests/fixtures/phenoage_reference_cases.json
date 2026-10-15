@@ -1,0 +1,169 @@
+{
+  "description": "PhenoAge reference cases computed by an independent 400-digit Decimal implementation of Levine et al. 2018 (doi:10.18632/aging.101414). Inputs are synthetic, NOT patient data.",
+  "units": {
+    "albumin": "g/L",
+    "creatinine": "umol/L",
+    "glucose": "mmol/L",
+    "crp": "mg/dL",
+    "lymphocyte_pct": "%",
+    "mcv": "fL",
+    "rdw": "%",
+    "alp": "U/L",
+    "wbc": "10^3/uL",
+    "age": "years"
+  },
+  "cases": [
+    {
+      "id": "REF-01",
+      "description": "healthy middle-aged adult, all values mid reference interval",
+      "inputs": {
+        "albumin": 45.0,
+        "creatinine": 80.0,
+        "glucose": 5.0,
+        "crp": 0.1,
+        "lymphocyte_pct": 30.0,
+        "mcv": 90.0,
+        "rdw": 13.0,
+        "alp": 70.0,
+        "wbc": 6.0,
+        "age": 50.0
+      },
+      "expected_phenoage": "41.889068111149",
+      "expected_mortality_score": "0.022473943235329",
+      "expected_xb": "-9.068366617872"
+    },
+    {
+      "id": "REF-02",
+      "description": "young adult, low inflammation",
+      "inputs": {
+        "albumin": 48.0,
+        "creatinine": 70.0,
+        "glucose": 4.6,
+        "crp": 0.03,
+        "lymphocyte_pct": 35.0,
+        "mcv": 88.0,
+        "rdw": 12.2,
+        "alp": 60.0,
+        "wbc": 5.2,
+        "age": 25.0
+      },
+      "expected_phenoage": "10.391491384784",
+      "expected_mortality_score": "0.001327181119629",
+      "expected_xb": "-11.908345623404"
+    },
+    {
+      "id": "REF-03",
+      "description": "older adult, elevated CRP / RDW / glucose",
+      "inputs": {
+        "albumin": 38.0,
+        "creatinine": 110.0,
+        "glucose": 7.8,
+        "crp": 1.2,
+        "lymphocyte_pct": 18.0,
+        "mcv": 95.0,
+        "rdw": 15.5,
+        "alp": 110.0,
+        "wbc": 8.5,
+        "age": 72.0
+      },
+      "expected_phenoage": "90.589784513187",
+      "expected_mortality_score": "0.840386653851425",
+      "expected_xb": "-4.677266523482"
+    },
+    {
+      "id": "REF-04",
+      "description": "NHANES-like population means (approx.), age 45",
+      "inputs": {
+        "albumin": 42.0,
+        "creatinine": 79.6,
+        "glucose": 5.4,
+        "crp": 0.3,
+        "lymphocyte_pct": 30.5,
+        "mcv": 89.5,
+        "rdw": 12.8,
+        "alp": 72.0,
+        "wbc": 7.0,
+        "age": 45.0
+      },
+      "expected_phenoage": "40.242837448907",
+      "expected_mortality_score": "0.019404138593439",
+      "expected_xb": "-9.216799005533"
+    },
+    {
+      "id": "REF-05",
+      "description": "very high risk profile (tests numerical stability)",
+      "inputs": {
+        "albumin": 25.0,
+        "creatinine": 400.0,
+        "glucose": 15.0,
+        "crp": 10.0,
+        "lymphocyte_pct": 8.0,
+        "mcv": 105.0,
+        "rdw": 20.0,
+        "alp": 300.0,
+        "wbc": 15.0,
+        "age": 84.0
+      },
+      "expected_phenoage": "183.286874751678",
+      "expected_mortality_score": "1.000000000000000",
+      "expected_xb": "3.680766617872"
+    },
+    {
+      "id": "REF-06",
+      "description": "CRP at 0.01 mg/dL (low hs-CRP)",
+      "inputs": {
+        "albumin": 46.0,
+        "creatinine": 65.0,
+        "glucose": 4.9,
+        "crp": 0.01,
+        "lymphocyte_pct": 32.0,
+        "mcv": 91.0,
+        "rdw": 12.5,
+        "alp": 55.0,
+        "wbc": 4.8,
+        "age": 38.0
+      },
+      "expected_phenoage": "23.730396588145",
+      "expected_mortality_score": "0.004411495583550",
+      "expected_xb": "-10.705643235743"
+    },
+    {
+      "id": "REF-07",
+      "description": "age 20 (lower training bound)",
+      "inputs": {
+        "albumin": 47.0,
+        "creatinine": 75.0,
+        "glucose": 4.8,
+        "crp": 0.05,
+        "lymphocyte_pct": 33.0,
+        "mcv": 87.0,
+        "rdw": 12.4,
+        "alp": 75.0,
+        "wbc": 6.2,
+        "age": 20.0
+      },
+      "expected_phenoage": "9.435607887943",
+      "expected_mortality_score": "0.001217652495406",
+      "expected_xb": "-11.994532858897"
+    },
+    {
+      "id": "REF-08",
+      "description": "age 84 (upper training bound), mid values",
+      "inputs": {
+        "albumin": 40.0,
+        "creatinine": 95.0,
+        "glucose": 5.8,
+        "crp": 0.4,
+        "lymphocyte_pct": 24.0,
+        "mcv": 93.0,
+        "rdw": 14.0,
+        "alp": 85.0,
+        "wbc": 6.8,
+        "age": 84.0
+      },
+      "expected_phenoage": "85.011260558893",
+      "expected_mortality_score": "0.670330337416664",
+      "expected_xb": "-5.180254135821"
+    }
+  ]
+}
