@@ -5,29 +5,54 @@ export interface BhrtAnalyte {
   name_zh: string;
   canonical_unit: string;
   units: string[];
+  free_unit: boolean;
+  qualitative: boolean;
   group: string;
 }
 
 export interface BhrtProduct {
   code: string;
+  hormone_en: string;
+  hormone_zh: string;
   name_zh: string;
-  route: string;
   strength: string;
-  package: string;
-  mg_per_unit: number | null;
-  unit_label: string;
-  confirmed: boolean;
-  note: string;
+  equivalent: string;
+  mg_per_ml: number | null;
+  route: string;
+  on_form: boolean;
+}
+
+export interface PanelItem {
+  no: number;
+  category: string;
+  name: string;
+  codes: string[];
+  female: boolean;
+  male: boolean;
+  imaging_code: string | null;
 }
 
 export interface BhrtCatalog {
   engine_version: string;
   click_mg_cream: number;
+  click_ml: number;
+  container_ml: number;
   clicks_per_container: number;
   products: BhrtProduct[];
+  form_instructions: { en: string; zh: string }[];
+  panel: PanelItem[];
   analytes: BhrtAnalyte[];
   mrs_items: string[];
   adam_items: string[];
+}
+
+// Printed on the prescription only; never sent to the backend.
+export interface PatientIdentity {
+  name: string;
+  patientId: string;
+  address: string;
+  tel: string;
+  doctor: string;
 }
 
 export interface ParsedLab {
@@ -42,13 +67,13 @@ export interface ParsedLab {
 
 export interface ParseResult {
   labs: ParsedLab[];
-  imaging: { birads: number | null; endometrial_thickness_mm: number | null; fibroids: boolean | null };
+  imaging: { birads: number | null; endometrial_thickness_mm: number | null; fibroids: boolean | null; done: string[] };
   unmatched_lines: number;
   warnings: string[];
 }
 
 export interface MissingItem { category: string; item: string; required: boolean; reason: string }
-export interface LabOut { code: string; name_zh: string; value: number; unit: string; collected_on: string | null; flag: string; note: string }
+export interface LabOut { code: string; name_zh: string; value: number; unit: string; collected_on: string | null; flag: string; note: string; display: string }
 export interface Risk { level: "STOP" | "HOLD" | "CAUTION" | "INFO"; code: string; title: string; detail: string; action: string; scope: string }
 export interface RxItem {
   product_code: string;

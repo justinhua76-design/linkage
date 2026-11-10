@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import type { BhrtCatalog, Evaluation, ParseResult } from "@/lib/bhrt";
+import type { BhrtCatalog, Evaluation, ParseResult, PatientIdentity } from "@/lib/bhrt";
 import Prescription from "./Prescription";
 
 type Sex = "female" | "male";
@@ -30,6 +30,10 @@ const MEDS: [string, string][] = [
   ["ssri_snri", "SSRI/SNRI"], ["stable_on_transdermal", "已有乳膏稳定疗效记录"],
 ];
 
+const CRITICAL = new Set([
+  "e2", "fsh", "total_t", "prl", "tsh", "alt", "ast", "creatinine", "tc", "tg", "ldl", "hb", "hct", "psa", "lh",
+]);
+
 const num = (s: string) => (s.trim() === "" ? null : Number(s));
 
 function Checks({ items, state, set }: {
@@ -48,6 +52,8 @@ function Checks({ items, state, set }: {
 
 export default function BhrtWorkbench({ catalog }: { catalog: BhrtCatalog }) {
   const [sex, setSex] = useState<Sex>("female");
+  const [identity, setIdentity] = useState<PatientIdentity>({ name: "", patientId: "", address: "", tel: "", doctor: "" });
+  const [imagingDone, setImagingDone] = useState<Record<string, boolean>>({});
   const [basic, setBasic] = useState({ client_ref: "", age: "", height_cm: "", weight_kg: "", sys: "", dia: "" });
   const [smoker, setSmoker] = useState(false);
   const [stage, setStage] = useState({ repro_stage: "unknown", years_since_fmp: "", uterus: "unknown", bleeding: "none" });
@@ -68,7 +74,9 @@ export default function BhrtWorkbench({ catalog }: { catalog: BhrtCatalog }) {
   const [breast, setBreast] = useState({ date: "", modality: "ultrasound", birads: "" });
   const [tvus, setTvus] = useState({ date: "", thickness: "", fibroids: false });
   const [dexa, setDexa] = useState("");
-  const [prefs, setPrefs] = useState({ route: "no_preference", progesterone: "auto", poor: false, consent: false });
+  const [prefs, setPrefs] = useState({
+    route: "no_preference", progesterone: "auto", biest: "2:8", supplement: false, poor: false, consent: false,
+  });
   const [startDate, setStartDate] = useState("");
 
   const [reportText, setReportText] = useState("");
@@ -85,6 +93,7 @@ export default function BhrtWorkbench({ catalog }: { catalog: BhrtCatalog }) {
       for (const l of r.labs) {
         const a = catalog.analytes.find((x) => x.code === l.code);
         const unit = l.unit && a?.units.includes(l.unit) ? l.unit : a?.canonical_unit ?? "";
+        if (!next[l.code]) continue;
         next[l.code] = { ...next[l.code], value: String(l.value), unit };
       }
       return next;
@@ -93,6 +102,8 @@ export default function BhrtWorkbench({ catalog }: { catalog: BhrtCatalog }) {
     if (r.imaging.endometrial_thickness_mm !== null)
       setTvus((t) => ({ ...t, thickness: String(r.imaging.endometrial_thickness_mm) }));
     if (r.imaging.fibroids) setTvus((t) => ({ ...t, fibroids: true }));
+    if (r.imaging.done.length)
+      setImagingDone((d) => ({ ...d, ...Object.fromEntries(r.imaging.done.map((c) => [c, true])) }));
     setParseMsg([`识别 ${r.labs.length} 项检验，请逐项核对下方数值与单位`, ...r.warnings]);
   }
 
@@ -163,9 +174,12 @@ export default function BhrtWorkbench({ catalog }: { catalog: BhrtCatalog }) {
       family: sex === "female" ? family : { thrombophilia: !!family.thrombophilia },
       medications: { ...meds, current_hrt: currentHrt || null },
       labs: labList,
+      imaging_done: Object.entries(imagingDone).filter(([, v]) => v).map(([k]) => k),
       preferences: {
         route: prefs.route,
         progesterone: prefs.progesterone,
+        biest_ratio: prefs.biest,
+        progesterone_cream_supplement: prefs.supplement,
         poor_daily_adherence: prefs.poor,
         pellet_consent_signed: prefs.consent,
       },
@@ -198,9 +212,10 @@ export default function BhrtWorkbench({ catalog }: { catalog: BhrtCatalog }) {
     }
   }
 
-  const groups: [string, string][] = sex === "female"
-    ? [["hormone", "性激素"], ["thyroid", "甲状腺"], ["cmp", "肝肾功能 / 血糖"], ["lipid", "血脂"], ["cbc", "血常规"], ["other", "其他（疲劳评估）"]]
-    : [["hormone", "性激素"], ["male", "前列腺"], ["cbc", "血常规"], ["cmp", "肝肾功能 / 血糖"], ["lipid", "血脂"], ["thyroid", "甲状腺"], ["other", "其他"]];
+  const panelLabs = catalog.panel.filter((p) => !p.imaging_code && (sex === "female" ? p.female : p.male));
+  const panelCats = Array.from(new Set(panelLabs.map((p) => p.category)));
+  const panelImaging = catalog.panel.filter((p) => p.imaging_code && (sex === "female" ? p.female : p.male));
+  const analyte = (code: string) => catalog.analytes.find((a) => a.code === code)!;
 
   return (
     <>
@@ -228,6 +243,13 @@ export default function BhrtWorkbench({ catalog }: { catalog: BhrtCatalog }) {
         {/* ---------------------------------------------------------- 2 */}
         <section className="card">
           <h2>2. 基本信息</h2>
+          <p className="muted">姓名、病历号、住址、电话、医师仅打印在处方单上，不发送到服务器。</p>
+          <div className="row">
+            {([["name", "患者姓名"], ["patientId", "病历号"], ["tel", "电话"], ["address", "住址"], ["doctor", "医师"]] as [keyof PatientIdentity, string][]).map(([k, label]) => (
+              <div className="field" key={k}><label>{label}</label>
+                <input value={identity[k]} onChange={(e) => setIdentity({ ...identity, [k]: e.target.value })} /></div>
+            ))}
+          </div>
           <div className="row">
             <div className="field"><label>客户编号</label><input value={basic.client_ref} onChange={(e) => setBasic({ ...basic, client_ref: e.target.value })} /></div>
             <div className="field"><label>性别</label>
@@ -309,27 +331,32 @@ export default function BhrtWorkbench({ catalog }: { catalog: BhrtCatalog }) {
           <h2>5. 检验结果</h2>
           <div className="field"><label>默认采样日期（未单独填写的项目使用此日期）</label>
             <input type="date" value={labDate} onChange={(e) => setLabDate(e.target.value)} /></div>
-          {groups.map(([g, title]) => {
-            const list = catalog.analytes.filter((a) => a.group === g && !(sex === "female" && a.code === "psa"));
-            if (!list.length) return null;
-            return (
-              <div key={g} className="table-wrap">
-                <h3>{title}</h3>
-                <table><tbody>
-                  {list.map((a) => (
-                    <tr key={a.code}>
-                      <td style={{ width: "40%" }}>{a.name_zh}</td>
-                      <td><input inputMode="decimal" size={7} value={labs[a.code].value}
-                        onChange={(e) => setLabs({ ...labs, [a.code]: { ...labs[a.code], value: e.target.value } })} /></td>
-                      <td><select value={labs[a.code].unit} onChange={(e) => setLabs({ ...labs, [a.code]: { ...labs[a.code], unit: e.target.value } })}>
-                        {a.units.map((u) => <option key={u}>{u}</option>)}</select></td>
-                      <td><input type="date" value={labs[a.code].date} onChange={(e) => setLabs({ ...labs, [a.code]: { ...labs[a.code], date: e.target.value } })} /></td>
+          <p className="muted">按 DKi BHRT 体检套餐（{panelLabs.length} 项）排列；标 ★ 为处方决策必查项。</p>
+          {panelCats.map((cat) => (
+            <details key={cat} open={["血脂", "血糖", "肾功能", "肝功能", "甲状腺八项", "性激素", "其它激素", "肿瘤标记物"].includes(cat)}>
+              <summary><strong>{cat}</strong>（{panelLabs.filter((p) => p.category === cat && p.codes.some((c) => labs[c]?.value)).length}/{panelLabs.filter((p) => p.category === cat).length}）</summary>
+              <div className="table-wrap"><table><tbody>
+                {panelLabs.filter((p) => p.category === cat).flatMap((p) => p.codes.map((code, idx) => {
+                  const a = analyte(code);
+                  const row = labs[code];
+                  const set = (patch: Partial<LabRow>) => setLabs({ ...labs, [code]: { ...row, ...patch } });
+                  return (
+                    <tr key={code}>
+                      <td style={{ width: "45%" }}>{idx === 0 ? `${p.no}. ` : "　 或 "}{a.name_zh}{CRITICAL.has(code) ? " ★" : ""}</td>
+                      <td>{a.qualitative
+                        ? <select value={row.value} onChange={(e) => set({ value: e.target.value })}>
+                            <option value="">—</option><option value="0">阴性</option><option value="1">阳性</option></select>
+                        : <input inputMode="decimal" size={7} value={row.value} onChange={(e) => set({ value: e.target.value })} />}</td>
+                      <td>{a.free_unit || a.qualitative ? <span className="muted">{a.canonical_unit}</span>
+                        : <select value={row.unit} onChange={(e) => set({ unit: e.target.value })}>
+                            {a.units.map((u) => <option key={u}>{u}</option>)}</select>}</td>
+                      <td><input type="date" value={row.date} onChange={(e) => set({ date: e.target.value })} /></td>
                     </tr>
-                  ))}
-                </tbody></table>
-              </div>
-            );
-          })}
+                  );
+                }))}
+              </tbody></table></div>
+            </details>
+          ))}
           {sex === "male" && (
             <div className="row" style={{ marginTop: 12 }}>
               <div className="field"><label>第二次晨起总睾酮</label><input inputMode="decimal" size={7} value={tRepeat.value} onChange={(e) => setTRepeat({ ...tRepeat, value: e.target.value })} /></div>
@@ -358,6 +385,16 @@ export default function BhrtWorkbench({ catalog }: { catalog: BhrtCatalog }) {
             </div>
           </section>
         )}
+        <section className="card">
+          <h3>套餐影像检查（已完成请勾选）</h3>
+          <div className="checks">
+            {panelImaging.map((p) => (
+              <label key={p.imaging_code} className="check"><input type="checkbox" checked={!!imagingDone[p.imaging_code!]}
+                onChange={(e) => setImagingDone({ ...imagingDone, [p.imaging_code!]: e.target.checked })} /> {p.no}. {p.name}</label>
+            ))}
+          </div>
+          <p className="muted">乳腺、子宫卵巢、骨密度：填写上方具体结果后自动视为已完成。</p>
+        </section>
 
         {/* ---------------------------------------------------------- 7 */}
         <section className="card">
@@ -367,12 +404,19 @@ export default function BhrtWorkbench({ catalog }: { catalog: BhrtCatalog }) {
               <option value="no_preference">无偏好</option><option value="cream">经皮乳膏</option><option value="pellet">Pellet 皮下植入</option></select></div>
             {sex === "female" && (
               <div className="field"><label>黄体酮途径</label><select value={prefs.progesterone} onChange={(e) => setPrefs({ ...prefs, progesterone: e.target.value })}>
-                <option value="auto">自动（睡眠问题→口服；肌瘤→阴道）</option><option value="oral">口服微粒化</option>
+                <option value="auto">自动（睡眠→口服；肌瘤→阴道）</option><option value="oral">口服微粒化</option>
                 <option value="vaginal">阴道</option><option value="cream">经皮乳膏（偏离默认）</option></select></div>
+            )}
+            {sex === "female" && (
+              <div className="field"><label>双雌配比</label><select value={prefs.biest} onChange={(e) => setPrefs({ ...prefs, biest: e.target.value })}>
+                <option value="2:8">Biest (2:8)</option><option value="1:9">Biest (1:9)</option></select></div>
             )}
             <div className="field"><label>开始日期</label><input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} /></div>
           </div>
           <div className="checks">
+            {sex === "female" && (
+              <label className="check"><input type="checkbox" checked={prefs.supplement} onChange={(e) => setPrefs({ ...prefs, supplement: e.target.checked })} /> 加用黄体酮乳膏作为补充（不替代内膜保护）</label>
+            )}
             <label className="check"><input type="checkbox" checked={prefs.poor} onChange={(e) => setPrefs({ ...prefs, poor: e.target.checked })} /> 每日涂抹依从性差</label>
             <label className="check"><input type="checkbox" checked={prefs.consent} onChange={(e) => setPrefs({ ...prefs, consent: e.target.checked })} /> 已签署 Pellet 知情同意</label>
           </div>
@@ -382,16 +426,17 @@ export default function BhrtWorkbench({ catalog }: { catalog: BhrtCatalog }) {
         <button type="submit" disabled={busy}>{busy ? "处理中…" : "核查并生成处方草案"}</button>
       </form>
 
-      {result && <ResultView ev={result} />}
+      {result && <ResultView ev={result} catalog={catalog} identity={identity} />}
     </>
   );
 }
 
 const LEVEL_LABEL: Record<string, string> = { STOP: "禁忌", HOLD: "暂缓", CAUTION: "注意", INFO: "提示" };
 
-function ResultView({ ev }: { ev: Evaluation }) {
+function ResultView({ ev, catalog, identity }: { ev: Evaluation; catalog: BhrtCatalog; identity: PatientIdentity }) {
   const required = ev.missing.filter((m) => m.required);
-  const optional = ev.missing.filter((m) => !m.required);
+  const optional = ev.missing.filter((m) => !m.required && m.category !== "package");
+  const pkg = ev.missing.filter((m) => !m.required && m.category === "package");
   const flagged = ev.labs.filter((l) => l.flag !== "normal");
   const cls = ev.status === "draft" ? "ok" : ev.status === "incomplete" ? "warn" : "error";
   return (
@@ -400,13 +445,15 @@ function ResultView({ ev }: { ev: Evaluation }) {
         <h2>评估结果</h2>
         <div className={`alert ${cls}`}><strong>{ev.status_label}</strong>　闸门：{ev.gate}　分期：{ev.stage.label}</div>
 
-        {(required.length > 0 || optional.length > 0) && (
+        {(required.length > 0 || optional.length > 0 || pkg.length > 0) && (
           <section className="card">
             <h3>报告核查：缺项清单</h3>
             {required.length > 0 && <><p className="err">必须补充（{required.length}）</p>
               <ul>{required.map((m) => <li key={m.item}>{m.item} <span className="muted">— {m.reason}</span></li>)}</ul></>}
             {optional.length > 0 && <><p className="muted">建议补充（{optional.length}）</p>
               <ul className="muted">{optional.map((m) => <li key={m.item}>{m.item}</li>)}</ul></>}
+            {pkg.length > 0 && <details><summary>BHRT 体检套餐缺项（{pkg.length}，不影响处方生成）</summary>
+              <ul className="muted cols">{pkg.map((m) => <li key={m.item}>{m.item}</li>)}</ul></details>}
           </section>
         )}
         {ev.lab_errors.length > 0 && <div className="alert warn">{ev.lab_errors.map((e) => <div key={e}>{e}</div>)}</div>}
@@ -423,7 +470,7 @@ function ResultView({ ev }: { ev: Evaluation }) {
           )}
           {flagged.length > 0 && (<>
             <h3>异常指标</h3>
-            <ul>{flagged.map((l) => <li key={l.code}>{l.name_zh}: {l.value} {l.unit}（{l.note}）</li>)}</ul>
+            <ul>{flagged.map((l) => <li key={l.code}>{l.name_zh}: {l.display}（{l.note}）</li>)}</ul>
           </>)}
           {ev.symptoms.map.length > 0 && (<>
             <h3>症状 → 激素对应</h3>
@@ -436,7 +483,7 @@ function ResultView({ ev }: { ev: Evaluation }) {
         </section>
       </div>
 
-      {ev.status === "draft" && <Prescription ev={ev} />}
+      {ev.status === "draft" && <Prescription ev={ev} catalog={catalog} identity={identity} />}
     </div>
   );
 }

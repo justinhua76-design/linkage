@@ -15,7 +15,15 @@ from app.domain.bhrt import rules as R
 from app.domain.bhrt.engine import ENGINE_VERSION, evaluate
 from app.domain.bhrt.intake import BhrtIntake
 from app.domain.bhrt.labs import ANALYTES
-from app.domain.bhrt.products import CLICK_MG_CREAM, CLICKS_PER_CONTAINER, PRODUCTS
+from app.domain.bhrt.panel import PANEL
+from app.domain.bhrt.products import (
+    CLICK_MG_CREAM,
+    CLICK_ML,
+    CLICKS_PER_CONTAINER,
+    CONTAINER_ML,
+    FORM_GENERAL_INSTRUCTIONS,
+    PRODUCTS,
+)
 from app.domain.bhrt.report_parser import PdfError, parse_text, pdf_text
 from app.services import audit
 
@@ -33,14 +41,20 @@ def catalog(_: Principal = Depends(require(Permission.BHRT_DRAFT))) -> dict:
     return {
         "engine_version": ENGINE_VERSION,
         "click_mg_cream": CLICK_MG_CREAM,
+        "click_ml": CLICK_ML,
+        "container_ml": CONTAINER_ML,
         "clicks_per_container": CLICKS_PER_CONTAINER,
-        "products": [asdict(p) for p in PRODUCTS.values()],
+        "products": [{**asdict(p), "name_zh": p.name_zh} for p in PRODUCTS.values()],
+        "form_instructions": [{"en": en, "zh": zh} for en, zh in FORM_GENERAL_INSTRUCTIONS],
+        "panel": [asdict(p) for p in PANEL],
         "analytes": [
             {
                 "code": a.code,
                 "name_zh": a.name_zh,
                 "canonical_unit": a.canonical_unit,
-                "units": list(a.units),
+                "units": a.unit_options,
+                "free_unit": a.units is None,
+                "qualitative": a.qualitative,
                 "group": a.group,
             }
             for a in ANALYTES.values()

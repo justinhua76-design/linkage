@@ -13,7 +13,7 @@ import binascii
 import io
 import re
 import unicodedata
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 
 from app.domain.bhrt.labs import ANALYTES, normalise_lab_unit
 
@@ -44,6 +44,7 @@ class ExtractedImaging:
     birads: int | None = None
     endometrial_thickness_mm: float | None = None
     fibroids: bool | None = None
+    done: list[str] = field(default_factory=list)  # panel imaging codes mentioned in the report
 
 
 @dataclass
@@ -100,6 +101,17 @@ def parse_text(text: str) -> ParseResult:
         rest = line[end:]
         # skip trailing alias text such as "(E2)" or "（TT）" before the number
         rest = re.sub(r"^\s*[\(（][^\)）]{0,20}[\)）]", "", rest)
+        a = ANALYTES[code]
+        if a.qualitative:
+            q = _qualitative(rest)
+            if q is None:
+                unmatched += 1
+                continue
+            if code in seen:
+                continue
+            seen.add(code)
+            labs.append(ExtractedLab(code, a.name_zh, q, "定性", True, False, line[:200]))
+            continue
         m = _VALUE_RE.search(rest)
         if m is None:
             unmatched += 1
@@ -113,7 +125,6 @@ def parse_text(text: str) -> ParseResult:
             um = re.search(r"([a-zA-Zu%][a-zA-Zu%/*\^\d]*/[a-zA-Z]+|%)", rest[m.end() :])
             unit_raw = um.group(1) if um else None
         norm_unit = normalise_lab_unit(unit_raw) if unit_raw else None
-        a = ANALYTES[code]
         if code == "hct" and norm_unit is None and value < 1:
             norm_unit = "L/L"
         if code in seen:
@@ -126,7 +137,7 @@ def parse_text(text: str) -> ParseResult:
                 name_zh=a.name_zh,
                 value=value,
                 unit=norm_unit or unit_raw,
-                unit_recognised=norm_unit is not None and norm_unit in a.units,
+                unit_recognised=a.units is None or (norm_unit is not None and norm_unit in a.units),
                 below_detection=(m.group("cmp") or "").startswith(("<", "≤")),
                 source_line=line[:200],
             )
@@ -137,7 +148,34 @@ def parse_text(text: str) -> ParseResult:
     return ParseResult(labs=labs, imaging=imaging, unmatched_lines=unmatched, warnings=warnings)
 
 
+def _qualitative(rest: str) -> float | None:
+    r = rest.casefold()
+    if "阳性" in r or "(+)" in r or re.search(r"(?<![a-z])pos", r):
+        return 1.0
+    if "阴性" in r or "(-)" in r or re.search(r"(?<![a-z])neg", r):
+        return 0.0
+    return None
+
+
+_IMAGING_KEYWORDS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("us_thyroid", ("甲状腺超声", "甲状腺彩超", "甲状腺b超")),
+    ("us_abdomen", ("腹部超声", "腹部彩超", "腹部b超", "肝胆胰脾", "肝胆脾胰")),
+    ("echo", ("超声心动图", "心脏彩超", "心脏超声")),
+    ("us_prostate", ("前列腺超声", "前列腺彩超", "前列腺b超")),
+    ("us_breast", ("乳腺超声", "乳腺彩超", "乳腺b超")),
+    ("us_pelvic", ("子宫附件", "子宫、卵巢", "子宫卵巢", "妇科超声", "经阴道超声", "盆腔超声")),
+    ("mammogram", ("钼靶", "乳腺x线", "mammogra")),
+    ("dexa", ("骨密度",)),
+    ("mri_brain", ("颅脑mri", "头颅mri", "颅脑磁共振", "头颅磁共振")),
+    ("ct_lung", ("肺部ct", "胸部ct", "肺ct", "胸部 ct", "肺部 ct")),
+    ("ct_heart", ("心脏ct", "冠脉ct", "冠状动脉ct", "钙化积分")),
+)
+
+
 def _parse_imaging(cf: str, img: ExtractedImaging) -> None:
+    for code, kws in _IMAGING_KEYWORDS:
+        if code not in img.done and any(k in cf for k in kws):
+            img.done.append(code)
     m = re.search(r"bi-?rads\s*[:：]?\s*(?:分类|类)?\s*([0-6])", cf)
     if m and img.birads is None:
         img.birads = int(m.group(1))

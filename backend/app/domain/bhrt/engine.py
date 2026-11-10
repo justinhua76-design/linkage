@@ -14,9 +14,10 @@ from datetime import date, timedelta
 from app.domain.bhrt import rules as R
 from app.domain.bhrt.intake import BhrtIntake
 from app.domain.bhrt.labs import ANALYTES, LabUnitError, to_canonical
-from app.domain.bhrt.products import CLICKS_PER_CONTAINER, PRODUCTS
+from app.domain.bhrt.panel import items_for
+from app.domain.bhrt.products import CLICK_ML, CONTAINER_ML, PRODUCTS
 
-ENGINE_VERSION = "bhrt-0.1.0"
+ENGINE_VERSION = "bhrt-0.2.0"
 
 STOP, HOLD, CAUTION, INFO = "STOP", "HOLD", "CAUTION", "INFO"
 _LEVEL_ORDER = {STOP: 3, HOLD: 2, CAUTION: 1, INFO: 0}
@@ -40,6 +41,7 @@ class LabOut:
     collected_on: str | None
     flag: str  # normal | high | low | critical
     note: str = ""
+    display: str = ""
 
 
 @dataclass
@@ -172,18 +174,41 @@ def _load_labs(c: _Ctx) -> None:
             c.lab_errors.append(f"{a.name_zh} 重复录入，使用第一条")
             continue
         c.labs[lv.code] = v
+        unit = a.canonical_unit if a.units else (lv.unit or a.canonical_unit)
+        if a.qualitative:
+            display = "阳性" if v >= 1 else "阴性"
+        else:
+            display = f"{'<' if lv.below_detection else ''}{_fmt(round(v, 3))} {unit}"
         c.lab_out.append(
             LabOut(
                 lv.code,
                 a.name_zh,
                 round(v, 3),
-                a.canonical_unit,
+                unit,
                 lv.collected_on.isoformat() if lv.collected_on else None,
                 "normal",
+                "",
+                display,
             )
         )
     if i.labs and any(lv.collected_on is None for lv in i.labs):
         c.assumptions.append("部分检测未填写采样日期，已假设在有效期内")
+
+
+def _imaging_done(i: BhrtIntake) -> set[str]:
+    done = set(i.imaging_done)
+    bi = i.breast_imaging
+    if bi and bi.birads is not None:
+        done |= (
+            {"us_breast", "mammogram"}
+            if bi.modality == "both"
+            else ({"mammogram"} if bi.modality == "mammogram" else {"us_breast"})
+        )
+    if i.pelvic_us and i.pelvic_us.endometrial_thickness_mm is not None:
+        done.add("us_pelvic")
+    if i.dexa_t_score is not None:
+        done.add("dexa")
+    return done
 
 
 def _check_completeness(c: _Ctx) -> None:
@@ -209,7 +234,6 @@ def _check_completeness(c: _Ctx) -> None:
             required += R.FEMALE_CYCLING_REQUIRED
         if i.hsdd_confirmed:
             required += R.FEMALE_HSDD_REQUIRED
-        recommended: tuple[str, ...] = R.FEMALE_RECOMMENDED_LABS
         # breast imaging
         bi = i.breast_imaging
         if bi is None or bi.birads is None:
@@ -218,40 +242,40 @@ def _check_completeness(c: _Ctx) -> None:
             c.need("imaging", "乳腺影像（已超过 12 个月，需复查）", True, "影像需在指南间隔内")
         # pelvic ultrasound
         pu = i.pelvic_us
-        tvus_required = bool(i.uterus_intact) and (
-            i.abnormal_bleeding != "none" or i.preferences.route == "pellet" or i.history.fibroids
-        )
+        tvus_required = bool(i.uterus_intact)
         if i.uterus_intact and (pu is None or pu.endometrial_thickness_mm is None):
-            c.need(
-                "imaging",
-                "经阴道超声（子宫内膜厚度）",
-                tvus_required,
-                "有出血史 / 肌瘤 / 计划 Pellet 时必须；其余情况作为基线建议",
-            )
+            c.need("imaging", "子宫、卵巢超声（子宫内膜厚度）", True, "子宫保留：评估内膜后方可使用雌激素")
         elif pu and pu.performed_on and (c.today - pu.performed_on).days > R.IMAGING_MAX_AGE_DAYS:
             c.need("imaging", "经阴道超声（已超过 12 个月）", tvus_required, "需在有效期内")
-        if _mrs(i, R.MRS_JOINT) >= R.MRS_SIGNIFICANT and i.dexa_t_score is None:
-            c.need("imaging", "骨密度 DEXA", False, "关节/骨骼症状，评估骨量")
     else:
         if i.adam is None:
             c.need("symptoms", "ADAM 男性雄激素缺乏问卷（10 项）", True, "症状是诊断性腺功能减退的前提")
         required = list(R.MALE_REQUIRED_LABS)
-        recommended = R.MALE_RECOMMENDED_LABS
         if i.male_total_t_repeat is None:
             c.need("lab", "第二次晨起（7–11 点）总睾酮", True, "需两次晨起低睾酮方可诊断")
         if i.history.sleep_apnea == "unknown":
             c.need("history", "睡眠呼吸暂停筛查（STOP-BANG）", True, "未治疗的重度 OSA 为暂缓条件")
 
-    # symptom-driven extra work-up (fatigue / brain fog)
-    if i.sex == "female" and _mrs(i, R.MRS_FATIGUE) >= R.MRS_SIGNIFICANT:
-        recommended = tuple(dict.fromkeys((*recommended, "ft4", "ferritin", "b12", "vitd")))
-
     for code in required:
         if code not in c.labs:
-            c.need("lab", ANALYTES[code].name_zh, True, "基线必查")
-    for code in recommended:
-        if code not in c.labs:
-            c.need("lab", ANALYTES[code].name_zh, False, "建议补充")
+            c.need("lab", ANALYTES[code].name_zh, True, "处方决策必查")
+
+    # DKi BHRT panel: every other package item
+    done_img = _imaging_done(i)
+    for item in items_for(i.sex):
+        if item.imaging_code:
+            if item.imaging_code not in done_img:
+                c.need(
+                    "package", f"{item.no}. {item.category}：{item.name}", R.PACKAGE_ITEMS_BLOCK, "BHRT 体检套餐项目"
+                )
+        elif not any(code in c.labs for code in item.codes) and not any(code in required for code in item.codes):
+            c.need("package", f"{item.no}. {item.category}：{item.name}", R.PACKAGE_ITEMS_BLOCK, "BHRT 体检套餐项目")
+
+    # symptom-driven extra work-up (fatigue / brain fog), outside the panel
+    if i.sex == "female" and _mrs(i, R.MRS_FATIGUE) >= R.MRS_SIGNIFICANT:
+        for code in R.FATIGUE_EXTRA_LABS:
+            if code not in c.labs:
+                c.need("lab", ANALYTES[code].name_zh, False, "疲劳/脑雾评估（套餐外）")
 
 
 # ====================================================================== step 2: risk analysis
@@ -401,6 +425,98 @@ def _analyse_labs(c: _Ctx) -> None:
             )
 
 
+def _analyse_panel(c: _Ctx) -> None:
+    """Risk points from the extended DKi panel (tumour markers, PRL, HBV, inflammation...)."""
+    i = c.intake
+    sex = i.sex
+    prl = c.lab("prl")
+    if prl is not None and prl > R.PRL_ULN[sex]:
+        if prl > R.PRL_ULN[sex] * R.PRL_HOLD_MULTIPLE:
+            _flag(c, "prl", "critical", "显著升高")
+            c.risk(
+                HOLD, "PRL_HIGH", "催乳素显著升高", f"PRL {_fmt(prl)} ng/mL", "排除药物因素，垂体 MRI / 内分泌科评估"
+            )
+            c.refer("内分泌科：高催乳素血症（垂体评估）")
+        else:
+            _flag(c, "prl", "high", "升高")
+            c.risk(CAUTION, "PRL_MILD", "催乳素轻度升高", f"PRL {_fmt(prl)} ng/mL", "复查（空腹静息）并核对用药")
+    if sex == "female":
+        for code, uln, title, ref in (
+            ("ca153", R.CA153_ULN, "CA15-3 升高", "乳腺外科：CA15-3 升高"),
+            ("ca125", R.CA125_ULN, "CA125 升高", "妇科：CA125 升高（卵巢/内膜评估）"),
+        ):
+            v = c.lab(code)
+            if v is not None and v > uln:
+                _flag(c, code, "high", "高于参考上限")
+                c.risk(HOLD, f"TM_{code.upper()}", title, f"{_fmt(v)} U/mL", "病理优先：明确原因后再考虑激素")
+                c.refer(ref)
+    for code, uln, title in (
+        ("cea", R.CEA_ULN, "CEA 升高"),
+        ("afp", R.AFP_ULN, "AFP 升高"),
+        ("ca199", R.CA199_ULN, "CA19-9 升高"),
+    ):
+        v = c.lab(code)
+        if v is not None and v > uln:
+            _flag(c, code, "high", "高于参考上限")
+            c.risk(CAUTION, f"TM_{code.upper()}", title, f"{_fmt(v)}", "专科评估排除肿瘤")
+            c.refer(f"专科评估：{title}")
+    hbsag = c.lab("hbsag")
+    if hbsag is not None and hbsag >= 1:
+        _flag(c, "hbsag", "high", "阳性")
+        c.risk(CAUTION, "HBV", "乙肝表面抗原阳性", "慢性乙肝感染可能", "查 HBV-DNA 与肝功能；经皮途径优先")
+        c.refer("肝病科：HBsAg 阳性")
+    hcy = c.lab("hcy")
+    if hcy is not None and hcy > R.HCY_HIGH:
+        _flag(c, "hcy", "high", "升高")
+        c.risk(
+            CAUTION,
+            "HCY",
+            "同型半胱氨酸升高",
+            f"HCY {_fmt(hcy)} µmol/L",
+            "血栓/心血管风险因素：补充 B 族维生素后复查；经皮途径",
+        )
+    crp = c.lab("hscrp")
+    if crp is not None and crp > R.HSCRP_HIGH:
+        _flag(c, "hscrp", "high", "升高")
+        c.risk(INFO, "HSCRP", "超敏 CRP 升高", f"hs-CRP {_fmt(crp)} mg/L", "纳入心血管风险评估；排除急性炎症")
+    apob = c.lab("apob")
+    if apob is not None and apob > R.APOB_HIGH:
+        _flag(c, "apob", "high", "升高")
+        c.risk(INFO, "APOB", "ApoB 升高", f"ApoB {_fmt(apob)} g/L", "动脉粥样硬化风险：纳入血脂管理")
+    glu, ins = c.lab("glucose"), c.lab("insulin")
+    if glu is not None and ins is not None:
+        homa = glu * ins / 22.5
+        if homa > R.HOMA_IR_HIGH:
+            c.risk(INFO, "HOMA", "胰岛素抵抗", f"HOMA-IR {homa:.1f}", "生活方式干预；代谢风险评估")
+    for code in ("tpoab", "tgab"):
+        v = c.lab(code)
+        if v is not None and code == "tpoab" and v > R.TPOAB_ULN:
+            _flag(c, code, "high", "升高")
+            c.risk(INFO, "THYROID_AB", "甲状腺自身抗体阳性", "提示自身免疫性甲状腺炎", "定期复查甲状腺功能")
+    ratio = c.lab("oh2_16")
+    if sex == "female" and ratio is not None and ratio < R.OH2_16_LOW:
+        _flag(c, "oh2_16", "low", "偏低")
+        c.risk(
+            INFO,
+            "OH2_16",
+            "2/16α-羟雌酮比值偏低",
+            f"{_fmt(ratio)}",
+            "雌激素代谢偏向 16α 途径：最低有效剂量，关注乳腺随访",
+        )
+    dheas = c.lab("dheas")
+    if dheas is not None and dheas < R.DHEAS_LOW[sex]:
+        _flag(c, "dheas", "low", "偏低")
+        c.risk(INFO, "DHEAS_LOW", "DHEA-S 偏低", f"{_fmt(dheas)} µg/dL", "可考虑 DHEA 乳膏（医师决定，循证有限）")
+        c.pending.append("DHEA-S 偏低：可考虑加用 DHEA 乳膏 5%（医师决定）")
+    if sex == "male":
+        e2 = c.lab("e2")
+        if e2 is not None and e2 > R.MALE_E2_HIGH:
+            _flag(c, "e2", "high", "男性偏高")
+            c.risk(CAUTION, "E2_HIGH_M", "男性雌二醇偏高", f"E2 {_fmt(e2)} pg/mL", "评估芳香化（体脂、饮酒、肝功能）")
+            c.pending.append("男性 E2 偏高：可考虑 Chrysin（白杨素）乳膏（医师决定，循证有限）")
+
+
+# ====================================================================== step 2b: history
 def _analyse_history(c: _Ctx, bmi: float | None) -> None:
     i, h, f, m = c.intake, c.intake.history, c.intake.family, c.intake.medications
     if i.bp_systolic and i.bp_diastolic:
@@ -630,33 +746,59 @@ def _symptoms(c: _Ctx) -> dict:
 
 
 # ====================================================================== step 5-6: route + doses
-def _containers(clicks_per_day: float, days: int) -> int:
-    return max(1, math.ceil(clicks_per_day * days / CLICKS_PER_CONTAINER))
+SITE_F = "前臂内侧 / 大腿内侧，轮换部位"
+SITE_M = "肩部 / 上臂 / 腹部，轮换部位"
+SITE_VAG = "阴道内（使用给药器）"
 
 
-def _cream(code: str, clicks: float, frequency: str, days: int, site: str, purpose: str) -> RxItem:
+def _containers_ml(total_ml: float) -> str:
+    n = max(1, math.ceil(total_ml / CONTAINER_ML - 1e-9))
+    return f"{CONTAINER_ML} mL × {n}"
+
+
+def _cream(
+    code: str, clicks: float, frequency: str, days_used: float, site: str, purpose: str, *, note: str = ""
+) -> RxItem:
+    """``days_used`` = number of application days in the supply period."""
     p = PRODUCTS[code]
-    active = f"{_fmt(p.mg_per_unit * clicks)} mg" if p.mg_per_unit else "待确认"
-    if code.startswith("biest") and p.mg_per_unit:
-        e2 = 0.125 if code == "biest_025" else 0.25
-        active = f"Bi-Est {_fmt(p.mg_per_unit * clicks)} mg（E2 {_fmt(e2 * clicks)} mg）"
+    ml = clicks * CLICK_ML
+    mg = p.mg_per_click() or 0.0
+    if p.e2_mg_per_ml or p.e3_mg_per_ml:
+        parts = []
+        if p.e2_mg_per_ml:
+            parts.append(f"E2 {_fmt(p.e2_mg_per_ml * ml)} mg")
+        if p.e3_mg_per_ml:
+            parts.append(f"E3 {_fmt(p.e3_mg_per_ml * ml)} mg")
+        active = " + ".join(parts)
+    else:
+        active = f"{_fmt(mg * clicks)} mg"
+    qty = _containers_ml(ml * days_used)
     return RxItem(
         code,
         p.name_zh,
-        p.strength,
-        f"{_fmt(clicks)} 转",
+        f"{p.strength}（{p.equivalent}）",
+        f"{_fmt(clicks)} 转（{_fmt(ml)} mL）",
         active,
         site,
         frequency,
-        f"{p.package} × {_containers(clicks, days)}（约 {days} 天用量）",
+        f"{qty}（约 {int(round(days_used))} 次用量）" + (f"；{note}" if note else ""),
         purpose,
     )
 
 
-def _pending(c: _Ctx, code: str, dose: str, site: str, freq: str, purpose: str) -> RxItem:
-    p = PRODUCTS[code]
-    c.pending.append(f"{p.name_zh}：{p.note}")
-    return RxItem(code, p.name_zh, p.strength, dose, "待确认", site, freq, "规格确认后计算", purpose, pending_spec=True)
+def _oral_prog(mg: int, frequency: str, capsules: int, purpose: str) -> RxItem:
+    p = PRODUCTS["prog_oral_100"]
+    return RxItem(
+        "prog_oral_100",
+        p.name_zh,
+        p.strength,
+        f"{mg // 100} 粒",
+        f"{mg} mg",
+        "口服",
+        frequency,
+        f"{capsules} 粒",
+        purpose,
+    )
 
 
 def _blocked(c: _Ctx, scope: str) -> list[Risk]:
@@ -679,38 +821,33 @@ def _female_plan(c: _Ctx, stage: str, sym: dict) -> tuple[dict, list[RxItem], st
     # --- systemic estrogen indication
     if stage == "D":
         need_e = True
-    elif stage == "A":
-        need_e = vms
     elif stage == "B":
-        need_e = vms or joint or low_bone or (mood and vms)
-    else:  # C
+        need_e = vms or joint or low_bone
+    else:  # A, C
         need_e = vms
 
     # --- testosterone indication (HSDD only)
-    t_blocked = _blocked(c, "testosterone")
-    need_t = i.hsdd_confirmed and mrs[R.MRS_SEX] >= sig and not t_blocked and c.lab("total_t") is not None
+    need_t = (
+        i.hsdd_confirmed and mrs[R.MRS_SEX] >= sig and not _blocked(c, "testosterone") and c.lab("total_t") is not None
+    )
 
     # --- route
-    pellet_blockers: list[str] = [f"{r.title}" for r in _blocked(c, "pellet")]
+    pellet_blockers: list[str] = [r.title for r in _blocked(c, "pellet")]
     if stage in ("A", "C"):
         pellet_blockers.append("围绝经期/绝经晚期：Pellet 非一线")
-    if any(r.level == CAUTION and r.code in ("VTE_CLEARED", "MIGRAINE_AURA", "ANTICOAG") for r in c.risks):
-        pellet_blockers.append("血栓/偏头痛/抗凝相关风险")
     if not i.medications.stable_on_transdermal:
         pellet_blockers.append("尚无乳膏稳定疗效记录（建议先乳膏滴定）")
     if not i.preferences.pellet_consent_signed:
         pellet_blockers.append("未签署 Pellet 知情同意（早期峰值、不可取出、雄激素不可逆效应）")
-    if i.uterus_intact and (i.pelvic_us is None or i.pelvic_us.endometrial_thickness_mm is None):
-        pellet_blockers.append("缺少基线经阴道超声")
     wants_pellet = i.preferences.route == "pellet" or (
         i.preferences.route == "no_preference" and i.preferences.poor_daily_adherence
     )
     use_pellet = wants_pellet and not pellet_blockers and (need_e or need_t)
     reasons: list[str] = []
     if use_pellet:
-        reasons.append("无闸门限制，第 10 节 Pellet 前清单通过，已有乳膏稳定疗效，客户偏好免每日涂抹")
+        reasons.append("无闸门限制，Pellet 前清单通过，已有乳膏稳定疗效，客户偏好免每日涂抹")
     else:
-        reasons.append("乳膏优先：可当日停用、便于滴定")
+        reasons.append("经皮乳膏优先：可当日停用、便于滴定")
         if wants_pellet:
             reasons.append("客户希望 Pellet，但以下条件未满足：" + "；".join(pellet_blockers))
     route = {
@@ -721,7 +858,6 @@ def _female_plan(c: _Ctx, stage: str, sym: dict) -> tuple[dict, list[RxItem], st
     }
 
     rx: list[RxItem] = []
-    site = "前臂内侧 / 大腿内侧，轮换部位"
     if need_e:
         if use_pellet:
             cautious = any(r.level == CAUTION for r in c.risks) or not i.medications.current_hrt
@@ -740,98 +876,93 @@ def _female_plan(c: _Ctx, stage: str, sym: dict) -> tuple[dict, list[RxItem], st
                 )
             )
         else:
-            code, clicks = {"A": ("biest_025", 1), "B": ("biest_05", 1), "C": ("biest_025", 1), "D": ("biest_05", 1)}[
-                stage
-            ]
-            rx.append(_cream(code, clicks, "每日早晨 1 次", days, site, "血管舒缩症状 / 雌激素缺乏"))
-        c.assumptions.append("乳膏 1 转 = 250 mg（Topi-Click 30 g ≈120 转），使用前需按分装器核实")
+            ratio = "biest28" if i.preferences.biest_ratio == "2:8" else "biest19"
+            strength = {"A": "025", "B": "05", "C": "025", "D": "05"}[stage]
+            rx.append(
+                _cream(
+                    f"{ratio}_{strength}",
+                    1,
+                    "每日早晨 1 次",
+                    days,
+                    SITE_F,
+                    "血管舒缩症状 / 雌激素缺乏",
+                    note="6–8 周后按症状 ±1 转滴定",
+                )
+            )
 
     # --- progesterone
     protection_needed = bool(i.uterus_intact) and need_e
     pref = i.preferences.progesterone
     fibroids = any(r.code == "FIBROIDS" for r in c.risks)
     endo = ""
+    cyclic = stage == "A"
+    freq_night = "每晚睡前，月经周期第 14–25 天" if cyclic else "每晚睡前，连续"
+    n_days = 36 if cyclic else days
+    protection_route = None
     if protection_needed:
         if pref == "cream":
-            rx.append(_cream("prog_cream_10", 4, "每晚睡前，连续", days, site, "子宫内膜保护（偏离默认）"))
+            rx.append(_cream("prog_10", 4, freq_night, n_days, SITE_F, "子宫内膜保护（经皮，偏离默认）"))
             c.deviations.append(
                 "按医师选择以黄体酮乳膏作内膜保护：经皮黄体酮不被视为可靠内膜保护（NAMS 2022）。"
                 "须基线 TVUS，6 个月复查，此后每年；任何出血按第 8 节评估。"
             )
-            endo = "黄体酮乳膏（偏离默认，需 TVUS 监测：基线、6 个月、每年）"
+            endo = "黄体酮乳膏 10% 4 转（偏离默认，需 TVUS 监测：基线、6 个月、每年）"
+            protection_route = "cream"
         elif pref == "vaginal" or (pref == "auto" and fibroids and not sleep_primary):
+            rx.append(_cream("prog_10", 4, freq_night, n_days, SITE_VAG, "子宫内膜保护（阴道给药）"))
+            c.assumptions.append("阴道给药使用黄体酮 10% 乳膏 1 mL（100 mg），需医师确认复方乳膏阴道使用方案")
+            endo = "黄体酮 10% 乳膏 4 转（100 mg）阴道给药" + ("；子宫肌瘤：强化保护 + TVUS 监测" if fibroids else "")
+            protection_route = "vaginal"
+        else:
+            mg = 200 if cyclic else 100
             rx.append(
-                _pending(
-                    c,
-                    "prog_vaginal",
-                    "按产品规格（内膜保护等效剂量）",
-                    "阴道给药",
-                    "每晚睡前，连续或每月 12–14 天",
-                    "子宫内膜保护",
+                _oral_prog(
+                    mg,
+                    freq_night,
+                    n_days * mg // 100,
+                    "子宫内膜保护" + (" + 睡眠（口服效果更佳）" if sleep_any else ""),
                 )
             )
-            endo = "阴道黄体酮" + ("（子宫肌瘤：强化保护 + TVUS 监测）" if fibroids else "")
-        else:
-            if stage == "A":
+            endo = f"口服微粒化黄体酮 {mg} mg，{freq_night}"
+            protection_route = "oral"
+        # cream as option & supplement on top of oral / vaginal protection
+        if protection_route in ("oral", "vaginal"):
+            if i.preferences.progesterone_cream_supplement:
                 rx.append(
-                    RxItem(
-                        "prog_oral_100",
-                        PRODUCTS["prog_oral_100"].name_zh,
-                        "100 mg",
-                        "2 粒",
-                        "200 mg",
-                        "口服",
-                        "每晚睡前，月经周期第 14–25 天",
-                        f"{12 * 3} 粒（3 个周期）",
-                        "子宫内膜保护" + ("+ 睡眠" if sleep_any else ""),
+                    _cream(
+                        "prog_5", 2, "每日早晨 1 次", days, SITE_F, "补充：日间情绪 / 焦虑支持", note="不替代内膜保护"
                     )
                 )
-                endo = "口服微粒化黄体酮 200 mg 睡前，周期第 14–25 天"
-            else:
-                rx.append(
-                    RxItem(
-                        "prog_oral_100",
-                        PRODUCTS["prog_oral_100"].name_zh,
-                        "100 mg",
-                        "1 粒",
-                        "100 mg",
-                        "口服",
-                        "每晚睡前，连续",
-                        f"{days} 粒",
-                        "子宫内膜保护" + ("+ 睡眠" if sleep_any else ""),
-                    )
-                )
-                endo = "口服微粒化黄体酮 100 mg 每晚连续"
-            if pref == "auto" and not sleep_primary:
-                c.assumptions.append("内膜保护默认口服微粒化黄体酮；亦可改为阴道黄体酮（贵方确认规格后）")
+            elif mood:
+                c.pending.append("情绪/焦虑症状：可勾选「加用黄体酮乳膏补充」（黄体酮 5% 2 转晨用）")
     else:
         endo = "子宫已切除，无需内膜保护" if i.uterus_intact is False else "未使用全身雌激素，无需内膜保护"
-        if stage == "A" or sleep_any or mood:
-            cyc = stage == "A"
-            freq = "每晚睡前，月经周期第 14–25 天" if cyc else "每晚睡前"
-            n_days = 36 if cyc else days
+        if cyclic or sleep_any or mood:
             if (sleep_primary or (sleep_any and pref == "oral")) and pref != "cream":
-                mg = 200 if cyc else 100
+                mg = 200 if cyclic else 100
                 rx.append(
-                    RxItem(
-                        "prog_oral_100",
-                        PRODUCTS["prog_oral_100"].name_zh,
-                        "100 mg",
-                        f"{mg // 100} 粒",
-                        f"{mg} mg",
-                        "口服",
-                        freq,
-                        f"{n_days * mg // 100} 粒",
-                        "睡眠（口服对睡眠效果更佳）",
+                    _oral_prog(
+                        mg,
+                        "每晚睡前" + ("，月经周期第 14–25 天" if cyclic else ""),
+                        n_days * mg // 100,
+                        "睡眠（口服效果更佳）",
                     )
                 )
             else:
                 rx.append(
-                    _cream("prog_cream_10", 2, freq, n_days, site, "围绝经期孕激素支持" if cyc else "情绪 / 睡眠支持")
+                    _cream(
+                        "prog_10",
+                        2,
+                        "每晚睡前" + ("，月经周期第 14–25 天" if cyclic else ""),
+                        n_days,
+                        SITE_F,
+                        "围绝经期孕激素支持" if cyclic else "情绪 / 睡眠支持",
+                        note="按症状 2–4 转滴定",
+                    )
                 )
-                c.assumptions.append("经皮黄体酮血药浓度不能可靠反映剂量，按症状滴定（2–4 转）")
+                c.assumptions.append("经皮黄体酮血药浓度不能可靠反映剂量，按症状滴定")
 
-    # --- testosterone
+    # --- testosterone (female HSDD)
     if need_t:
         if use_pellet:
             bmi = _bmi(i)
@@ -851,16 +982,25 @@ def _female_plan(c: _Ctx, stage: str, sym: dict) -> tuple[dict, list[RxItem], st
             )
         else:
             rx.append(
-                _pending(c, "t_cream_f", "目标约 0.3 mg/日（按浓度换算转数）", site, "每日 1 次", "性欲低下（HSDD）")
+                _cream(
+                    "t_1",
+                    1,
+                    "每日 1 次",
+                    days,
+                    "大腿内侧 / 下腹部，轮换部位",
+                    "性欲低下（HSDD）",
+                    note="4–6 周查总睾酮，维持在女性生理范围内；最多 2 转",
+                )
             )
     elif mrs[R.MRS_SEX] >= sig and not i.hsdd_confirmed:
         c.pending.append("性欲低下：需医师确认 HSDD（排除关系、SSRI、GSM 疼痛）后方可考虑睾酮")
 
-    # --- local GSM therapy
+    # --- local GSM therapy: estriol 0.01% vaginal, nightly 2 weeks then twice weekly
     if gsm:
+        applications = 14 + (days - 14) / 7 * 2
         rx.append(
-            _pending(
-                c, "estriol_vaginal", "按产品规格", "阴道给药", "起始每晚 2 周，后每周 2 次", "泌尿生殖综合征（GSM）"
+            _cream(
+                "estriol_001", 4, "起始每晚 1 次 × 2 周，之后每周 2 次", applications, SITE_VAG, "泌尿生殖综合征（GSM）"
             )
         )
     if stage == "C" and not need_e and gsm:
@@ -904,7 +1044,7 @@ def _male_plan(c: _Ctx, sym: dict) -> tuple[dict, list[RxItem], str]:
     route = {
         "selected": "pellet" if use_pellet else "cream",
         "selected_label": "Pellet 皮下植入" if use_pellet else "经皮乳膏",
-        "reasons": ["Pellet 条件满足"] if use_pellet else ["乳膏优先，便于滴定与停药"],
+        "reasons": ["Pellet 条件满足"] if use_pellet else ["经皮乳膏优先，便于滴定与停药"],
         "pellet_blockers": blockers,
     }
     rx: list[RxItem] = []
@@ -925,7 +1065,15 @@ def _male_plan(c: _Ctx, sym: dict) -> tuple[dict, list[RxItem], str]:
         c.pending.append("男性睾酮 Pellet 起始剂量需医师按标签范围（150–450 mg）确定；超出为超说明书使用")
     else:
         rx.append(
-            _pending(c, "t_cream_m", "按贵方男性方案", "肩部 / 上臂 / 腹部，轮换", "每日早晨 1 次", "男性性腺功能减退")
+            _cream(
+                "t_20",
+                1,
+                "每日早晨 1 次",
+                90,
+                SITE_M,
+                "男性性腺功能减退",
+                note="2–4 周查谷值总睾酮 / Hct，按结果 1–2 转滴定",
+            )
         )
     return route, rx, "不适用（男性）"
 
@@ -983,15 +1131,15 @@ def _monitoring(c: _Ctx, start: date, pellet: bool) -> list[FollowUp]:
 def _outcomes(c: _Ctx, rx: list[RxItem], sym: dict) -> list[dict]:
     codes = {r.product_code for r in rx}
     out = []
-    if codes & {"prog_oral_100", "prog_cream_10", "prog_cream_5", "prog_vaginal"}:
+    if codes & {"prog_oral_100", "prog_10", "prog_5"}:
         out.append({"domain": "睡眠", "onset": "1–2 周", "track": "睡眠日记"})
-    if codes & {"biest_025", "biest_05", "e2_pellet"}:
+    if codes & {"biest28_025", "biest28_05", "biest19_025", "biest19_05", "e2_pellet"}:
         out.append({"domain": "潮热", "onset": "2–4 周", "track": "频率/严重度记录、MRS"})
         out.append({"domain": "情绪", "onset": "4–8 周", "track": "MRS 心理子量表"})
         out.append({"domain": "骨骼", "onset": "12 个月以上", "track": "DEXA"})
-    if codes & {"t_cream_f", "t_pellet", "t_cream_m"}:
+    if codes & {"t_1", "t_20", "t_pellet"}:
         out.append({"domain": "性欲", "onset": "6–12 周", "track": "性功能评分"})
-    if "estriol_vaginal" in codes:
+    if "estriol_001" in codes:
         out.append({"domain": "阴道症状", "onset": "8–12 周", "track": "症状评分"})
     return out
 
@@ -1017,6 +1165,7 @@ def evaluate(intake: BhrtIntake, today: date | None = None) -> Evaluation:
     _load_labs(c)
     _check_completeness(c)
     _analyse_labs(c)
+    _analyse_panel(c)
     _analyse_history(c, bmi)
     stage = _stage(c)
     sym = _symptoms(c)
@@ -1045,7 +1194,7 @@ def evaluate(intake: BhrtIntake, today: date | None = None) -> Evaluation:
 
     if status != "draft":
         rx, route, endo = [], {"selected": None, "selected_label": "—", "reasons": [], "pellet_blockers": []}, ""
-        c.pending = [p for p in c.pending if "规格" not in p and "Pellet" not in p]
+        c.pending = [p for p in c.pending if "Pellet" not in p]
     elif intake.sex == "female":
         if stage["code"] == "?":  # unreachable when completeness passes, kept defensive
             status, label = "incomplete", "评估待补：分期不明确"

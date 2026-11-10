@@ -11,14 +11,43 @@ LAB_MAX_AGE_DAYS = 90  # labs older than this count as missing
 IMAGING_MAX_AGE_DAYS = 365  # mammogram / breast US / TVUS
 
 # ---------------------------------------------------------------- required labs
-# "required": no dose is proposed without them; "recommended": listed as 待补 but not blocking.
-FEMALE_REQUIRED_LABS = ("e2", "fsh", "total_t", "tsh", "alt", "ast", "creatinine", "tc", "tg", "ldl", "hb", "hct")
-FEMALE_RECOMMENDED_LABS = ("shbg", "lh", "dheas", "ft4", "glucose", "hdl", "hba1c", "vitd", "ferritin")
+# Decision-critical items block the draft when missing. All other items of the DKi BHRT
+# panel (panel.py) are listed as 套餐缺项; set PACKAGE_ITEMS_BLOCK = True to make them blocking too.
+FEMALE_REQUIRED_LABS = (
+    "e2",
+    "fsh",
+    "total_t",
+    "prl",
+    "tsh",
+    "alt",
+    "ast",
+    "creatinine",
+    "tc",
+    "tg",
+    "ldl",
+    "hb",
+    "hct",
+)
 FEMALE_CYCLING_REQUIRED = ("progesterone",)
 FEMALE_HSDD_REQUIRED = ("shbg",)  # needed before female testosterone
-
-MALE_REQUIRED_LABS = ("total_t", "hct", "hb", "psa", "lh", "fsh", "e2", "alt", "ast", "creatinine", "tc", "tg", "ldl")
-MALE_RECOMMENDED_LABS = ("shbg", "free_t", "tsh", "glucose", "hdl", "hba1c", "vitd")
+MALE_REQUIRED_LABS = (
+    "total_t",
+    "hct",
+    "hb",
+    "psa",
+    "lh",
+    "fsh",
+    "e2",
+    "prl",
+    "alt",
+    "ast",
+    "creatinine",
+    "tc",
+    "tg",
+    "ldl",
+)
+FATIGUE_EXTRA_LABS = ("b12",)  # outside the panel; suggested when fatigue / brain fog
+PACKAGE_ITEMS_BLOCK = False
 
 # ---------------------------------------------------------------- lab thresholds (canonical units)
 ALT_ULN = 40.0  # U/L
@@ -43,6 +72,21 @@ FEMALE_TOTAL_T_ULN = 2.0  # nmol/L, upper premenopausal physiologic range (lab-s
 FSH_POSTMENOPAUSAL = 25.0  # IU/L, supportive of late transition / postmenopause
 MALE_T_LOW = 9.2  # nmol/L (264 ng/dL, Endocrine Society)
 MALE_T_BORDERLINE = 12.0
+PRL_ULN = {"female": 25.0, "male": 18.0}  # ng/mL
+PRL_HOLD_MULTIPLE = 2.0
+MALE_E2_HIGH = 50.0  # pg/mL
+DHEAS_LOW = {"female": 35.0, "male": 80.0}  # ug/dL
+CA125_ULN = 35.0  # U/mL
+CA153_ULN = 25.0  # U/mL
+CEA_ULN = 5.0  # ng/mL
+AFP_ULN = 20.0  # ng/mL
+CA199_ULN = 37.0  # U/mL
+HCY_HIGH = 15.0  # umol/L
+HSCRP_HIGH = 3.0  # mg/L
+TPOAB_ULN = 34.0  # IU/mL
+HOMA_IR_HIGH = 2.5
+APOB_HIGH = 1.3  # g/L
+OH2_16_LOW = 2.0
 VITD_DEFICIENT = 20.0  # ng/mL
 FERRITIN_LOW = 30.0  # ng/mL
 B12_LOW = 200.0  # pg/mL

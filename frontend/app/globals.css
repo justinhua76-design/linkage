@@ -93,6 +93,20 @@ label.file { cursor: pointer; color: var(--accent); font-weight: 400; margin: 0;
 .rx-table tr.pending td { background: var(--warn-bg); }
 .rx-sign-lines div { border-bottom: 1px solid var(--border); height: 28px; }
 .rx-notes { margin-top: 24px; padding-top: 8px; border-top: 1px dashed var(--border); font-size: 13px; }
+.rx-clinic { font-weight: 800; font-size: 22px; letter-spacing: 0.5px; color: var(--accent); }
+.rx-center { text-align: center; }
+.rx-doc h2.rx-center { border-left: none; padding-left: 0; font-weight: 500; }
+.rx-info { display: grid; grid-template-columns: max-content 1fr max-content 1fr; gap: 6px 12px; font-size: 14px; }
+.rx-line { border-bottom: 1px solid var(--text); min-width: 0; word-break: break-all; }
+.rx-select td, .rx-select th { padding: 4px 8px; border: 1px solid var(--text); }
+.rx-select tr.ticked td { font-weight: 700; background: var(--ok-bg); }
+.rx-tick { text-align: center; font-size: 18px; }
+.rx-detail { border: 1px solid var(--border); border-radius: 6px; padding: 8px 12px; margin-bottom: 8px; font-size: 14px; }
+.rx-detail-title { font-weight: 700; margin-bottom: 4px; }
+.rx-gi { margin: 2px 0; font-size: 14px; }
+.rx-clinical { margin-top: 32px; padding-top: 16px; border-top: 2px dashed var(--border); }
+ul.cols { columns: 2; }
+@media (max-width: 640px) { .rx-info { grid-template-columns: max-content 1fr; } ul.cols { columns: 1; } }
 @media print {
   header.top, .ruo, .no-print { display: none !important; }
   body { background: #fff; }
@@ -100,5 +114,12 @@ label.file { cursor: pointer; color: var(--accent); font-weight: 400; margin: 0;
   .card.rx-doc { border: none; padding: 0; }
   .rx-doc h2 { break-after: avoid; }
   .rx-table tr { break-inside: avoid; }
-  .rx-notes { break-before: page; }
+  .rx-clinical { break-before: page; border-top: none; margin-top: 0; }
+  .rx-detail { break-inside: avoid; }
+  .rx-select tr.ticked td { background: #fff; }
+  .rx-doc { font-size: 12px; }
+  .rx-select td, .rx-select th { padding: 2px 6px; font-size: 12px; }
+  .rx-doc p { margin: 4px 0; }
+  .rx-doc h2 { margin: 12px 0 6px; font-size: 14px; }
+  .rx-detail { padding: 4px 8px; font-size: 12px; }
 }

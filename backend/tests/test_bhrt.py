@@ -27,6 +27,7 @@ FEMALE_LABS = [
     {"code": "ldl", "value": 3.0, "unit": "mmol/L"},
     {"code": "hb", "value": 130, "unit": "g/L"},
     {"code": "hct", "value": 40, "unit": "%"},
+    {"code": "prl", "value": 12, "unit": "ng/mL"},
 ]
 
 BASE = {
@@ -66,10 +67,10 @@ def test_early_postmenopause_cream_draft():
     assert ev.status == "draft", (ev.missing, ev.risks)
     assert ev.stage["code"] == "B"
     assert ev.route["selected"] == "cream"
-    assert codes(ev) == ["biest_05", "prog_oral_100"]
+    assert codes(ev) == ["biest28_05", "prog_oral_100"]
     biest = ev.prescription[0]
-    assert biest.dose == "1 转" and "E2 0.25 mg" in biest.active_dose
-    assert "Topi-Click 30 g × 1" in biest.duration_quantity  # 90 clicks < 120 per container
+    assert biest.dose == "1 转（0.25 mL）" and "E2 0.25 mg" in biest.active_dose
+    assert "30 mL × 1" in biest.duration_quantity  # 90 clicks = 22.5 mL
     assert "100 mg" in ev.endometrial_protection
     assert ev.monitoring and ev.client_instructions
 
@@ -77,21 +78,21 @@ def test_early_postmenopause_cream_draft():
 def test_no_uterus_no_protection_and_sleep_gets_oral():
     ev = run(uterus_intact=False, mrs=[3, 0, 4, 0, 0, 0, 0, 0, 0, 0, 0])
     assert ev.status == "draft"
-    assert codes(ev) == ["biest_05", "prog_oral_100"]
+    assert codes(ev) == ["biest28_05", "prog_oral_100"]
     assert "睡眠" in ev.prescription[1].purpose
     assert "子宫已切除" in ev.endometrial_protection
 
 
-def test_fibroids_default_to_vaginal_progesterone_with_pending_spec():
+def test_fibroids_default_to_vaginal_progesterone():
     ev = run(history={"fibroids": True})
-    assert "prog_vaginal" in codes(ev)
-    assert any("阴道用黄体酮" in p for p in ev.pending)
+    prog = next(x for x in ev.prescription if x.product_code == "prog_10")
+    assert "阴道" in prog.route_site and "100 mg" in prog.active_dose
     assert any(r.code == "FIBROIDS" for r in ev.risks)
 
 
 def test_cream_progesterone_for_protection_is_documented_deviation():
     ev = run(preferences={"progesterone": "cream"})
-    assert "prog_cream_10" in codes(ev)
+    assert "prog_10" in codes(ev)
     assert ev.deviations and "NAMS" in ev.deviations[0]
 
 
@@ -112,14 +113,14 @@ def test_perimenopause_without_vms_gets_progesterone_only():
 def test_late_postmenopause_gsm_only_local_therapy():
     ev = run(age=66, years_since_fmp=15, mrs=[0, 0, 0, 0, 0, 0, 0, 0, 1, 3, 0])
     assert ev.stage["code"] == "C"
-    assert codes(ev) == ["estriol_vaginal"]
+    assert codes(ev) == ["estriol_001"]
 
 
 def test_hsdd_testosterone_only_when_confirmed():
     ev = run(mrs=[3, 0, 0, 0, 0, 0, 0, 3, 0, 0, 0])
-    assert "t_cream_f" not in codes(ev)
+    assert "t_1" not in codes(ev)
     ev = run(mrs=[3, 0, 0, 0, 0, 0, 0, 3, 0, 0, 0], hsdd_confirmed=True)
-    assert "t_cream_f" in codes(ev)
+    assert "t_1" in codes(ev)
 
 
 # ------------------------------------------------------------------ completeness
@@ -216,6 +217,7 @@ MALE = {
         {"code": "tc", "value": 5, "unit": "mmol/L"},
         {"code": "tg", "value": 1.5, "unit": "mmol/L"},
         {"code": "ldl", "value": 3, "unit": "mmol/L"},
+        {"code": "prl", "value": 8, "unit": "ng/mL"},
     ],
     "male_total_t_repeat": {"code": "total_t", "value": 7.5, "unit": "nmol/L"},
     "evaluation_date": TODAY.isoformat(),
@@ -225,7 +227,7 @@ MALE = {
 def test_male_hypogonadism_draft():
     ev = evaluate(BhrtIntake.model_validate(MALE))
     assert ev.status == "draft", (ev.missing, ev.risks)
-    assert codes(ev) == ["t_cream_m"]
+    assert codes(ev) == ["t_20"]
 
 
 def test_male_high_hct_and_fertility_hold():
@@ -283,3 +285,53 @@ def test_api_rejects_non_pdf(client):
     b64 = base64.b64encode(b"hello world").decode()
     r = client.post("/api/v1/bhrt/reports/parse", json={"pdf_base64": b64}, headers=auth("clinician"))
     assert r.status_code == 422 and r.json()["code"] == "PDF_INVALID"
+
+
+# ------------------------------------------------------------------ DKi panel / products (v0.2)
+def test_package_items_listed_but_not_blocking():
+    ev = run()
+    assert ev.status == "draft"
+    pkg = [m for m in ev.missing if m.category == "package"]
+    assert any(m.item.startswith("69.") for m in pkg)  # CA125
+    assert any("颅脑" in m.item for m in pkg)
+    assert not any("TPSA" in m.item for m in pkg)  # male-only item
+    assert all(not m.required for m in pkg)
+
+
+def test_prl_is_decision_critical():
+    labs = [x for x in FEMALE_LABS if x["code"] != "prl"]
+    assert run(labs=labs).status == "incomplete"
+
+
+def test_biest_ratio_1_9():
+    ev = run(preferences={"biest_ratio": "1:9"})
+    biest = ev.prescription[0]
+    assert biest.product_code == "biest19_05"
+    assert "E2 0.125 mg" in biest.active_dose and "E3 1.125 mg" in biest.active_dose
+
+
+def test_progesterone_cream_supplement():
+    ev = run(preferences={"progesterone_cream_supplement": True})
+    assert codes(ev) == ["biest28_05", "prog_oral_100", "prog_5"]
+
+
+def test_ca125_holds_and_hbsag_cautions():
+    ev = run(labs=FEMALE_LABS + [{"code": "ca125", "value": 80, "unit": "U/mL"}])
+    assert ev.status == "hold"
+    ev = run(labs=FEMALE_LABS + [{"code": "hbsag", "value": 1, "unit": "定性"}])
+    assert ev.status == "draft" and any(r.code == "HBV" for r in ev.risks)
+    assert next(lab for lab in ev.labs if lab.code == "hbsag").display == "阳性"
+
+
+def test_male_high_e2_suggests_chrysin():
+    m = copy.deepcopy(MALE)
+    m["labs"][6]["value"] = 70
+    ev = evaluate(BhrtIntake.model_validate(m))
+    assert any("Chrysin" in p for p in ev.pending)
+
+
+def test_parser_qualitative_and_imaging_done():
+    r = parse_text("乙型肝炎病毒表面抗原 阳性(+)\n甲状腺彩超：未见异常\n颅脑MRI 未见异常\n催乳素 15 ng/mL")
+    by = {lab.code: lab for lab in r.labs}
+    assert by["hbsag"].value == 1.0 and by["prl"].value == 15
+    assert set(r.imaging.done) == {"us_thyroid", "mri_brain"}

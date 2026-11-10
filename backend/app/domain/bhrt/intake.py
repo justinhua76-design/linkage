@@ -83,6 +83,9 @@ class Medications(_M):
 class Preferences(_M):
     route: RoutePref = "no_preference"
     progesterone: ProgPref = "auto"
+    biest_ratio: Literal["2:8", "1:9"] = "2:8"
+    # add transdermal progesterone cream on top of oral/vaginal protection (option & supplement)
+    progesterone_cream_supplement: bool = False
     poor_daily_adherence: bool = False
     pellet_consent_signed: bool = False
 
@@ -119,6 +122,8 @@ class BhrtIntake(_M):
     breast_imaging: BreastImaging | None = None
     pelvic_us: PelvicUltrasound | None = None
     dexa_t_score: float | None = Field(default=None, ge=-6, le=6)
+    # panel imaging items completed (codes from panel.IMAGING_ITEMS, e.g. "us_thyroid", "mri_brain")
+    imaging_done: list[str] = Field(default_factory=list, max_length=20)
 
     preferences: Preferences = Field(default_factory=Preferences)
     evaluation_date: date | None = None
