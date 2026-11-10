@@ -12,7 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app import __version__
-from app.api.v1 import audit_logs, bioage, patients
+from app.api.v1 import audit_logs, bhrt, bioage, patients
 from app.core.config import get_settings
 from app.core.logging import configure_logging
 
@@ -108,7 +108,7 @@ def create_app() -> FastAPI:
     def health() -> dict[str, str]:
         return {"status": "ok", "version": __version__}
 
-    for r in (bioage.router, patients.router, audit_logs.router):
+    for r in (bioage.router, patients.router, audit_logs.router, bhrt.router):
         app.include_router(r, prefix="/api/v1")
     return app
 

@@ -72,3 +72,33 @@ th { color: var(--muted); font-weight: 600; white-space: nowrap; }
 .kv dd { margin: 0; word-break: break-all; }
 code { font-size: 12px; }
 @media (max-width: 640px) { .big { font-size: 36px; } }
+
+/* ---------------------------------------------------------------- BHRT tool */
+h3 { font-size: 15px; margin: 16px 0 8px; }
+textarea { font: inherit; width: 100%; padding: 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text); }
+.nowrap { flex-wrap: nowrap; align-items: center; }
+.between { justify-content: space-between; }
+.grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 8px 24px; }
+.checks { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-bottom: 8px; }
+label.check { font-weight: 400; display: inline-flex; gap: 6px; align-items: center; margin: 0; }
+label.file { cursor: pointer; color: var(--accent); font-weight: 400; margin: 0; }
+.alert.ok { background: var(--ok-bg); color: var(--ok-text); }
+.badge.lvl-STOP { background: var(--error-text); color: #fff; }
+.badge.lvl-HOLD { background: var(--error-bg); color: var(--error-text); }
+.badge.lvl-CAUTION { background: var(--warn-bg); color: var(--warn-text); }
+.badge.lvl-INFO { background: var(--bg); color: var(--muted); }
+.rx-doc h1.rx-title { text-align: center; font-size: 20px; margin-bottom: 4px; }
+.rx-doc .rx-draft { text-align: center; color: var(--error-text); font-weight: 700; margin-top: 0; }
+.rx-doc h2 { font-size: 16px; border-left: 4px solid var(--accent); padding-left: 8px; }
+.rx-table tr.pending td { background: var(--warn-bg); }
+.rx-sign-lines div { border-bottom: 1px solid var(--border); height: 28px; }
+.rx-notes { margin-top: 24px; padding-top: 8px; border-top: 1px dashed var(--border); font-size: 13px; }
+@media print {
+  header.top, .ruo, .no-print { display: none !important; }
+  body { background: #fff; }
+  main { max-width: none; padding: 0; }
+  .card.rx-doc { border: none; padding: 0; }
+  .rx-doc h2 { break-after: avoid; }
+  .rx-table tr { break-inside: avoid; }
+  .rx-notes { break-before: page; }
+}

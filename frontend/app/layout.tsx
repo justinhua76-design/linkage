@@ -16,6 +16,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <nav className="row">
             <Link href="/">患者列表</Link>
             <Link href="/patients/new">新建患者</Link>
+            <Link href="/bhrt">BHRT 处方</Link>
           </nav>
         </header>
         <div className="ruo" role="note">

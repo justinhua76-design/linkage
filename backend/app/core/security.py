@@ -27,6 +27,7 @@ class Permission(StrEnum):
     BIOAGE_COMPUTE = "bioage:compute"
     BIOAGE_READ = "bioage:read"
     AUDIT_READ = "audit:read"
+    BHRT_DRAFT = "bhrt:draft"
 
 
 ROLE_PERMISSIONS: dict[Role, frozenset[Permission]] = {
@@ -39,6 +40,7 @@ ROLE_PERMISSIONS: dict[Role, frozenset[Permission]] = {
             Permission.LAB_READ,
             Permission.BIOAGE_COMPUTE,
             Permission.BIOAGE_READ,
+            Permission.BHRT_DRAFT,
         }
     ),
     Role.RESEARCHER: frozenset(

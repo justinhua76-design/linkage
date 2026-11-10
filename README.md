@@ -37,6 +37,10 @@
 └── .env.example
 ```
 
+## BHRT 处方工具
+
+页面 `/bhrt`：报告导入 → 缺项核查 → 风险分析 → 处方草案（可打印 / 导出 PDF）。规则与待确认事项见 [docs/BHRT_TOOL.md](docs/BHRT_TOOL.md)。
+
 ## 快速开始（Docker）
 
 ```bash
